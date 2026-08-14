@@ -1083,8 +1083,8 @@ function renderNotes(){
 }
 $("#noteAdd").addEventListener("click", ()=>{
   const d = new Date();
-  notes.push({t:"Session du "+d.toLocaleDateString("fr-FR")+"\n"});
-  noteEditIdx = notes.length-1;
+  notes.unshift({t:"Session du "+d.toLocaleDateString("fr-FR")+"\n"});
+  noteEditIdx = 0;
   renderNotes();
   const a = $("#ntArea");
   if(a){ a.focus(); a.setSelectionRange(a.value.length, a.value.length); a.scrollIntoView({block:"center"}); }
