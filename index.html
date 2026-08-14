@@ -551,10 +551,67 @@ const SEED_MAPS = [
 ];
 
 /* ================== ÉTAT ================== */
-const store = {
-  get(k,f){ try{ const v = localStorage.getItem("aldar_"+k); return v===null? f : JSON.parse(v);}catch(e){return f} },
-  set(k,v){ try{ localStorage.setItem("aldar_"+k, JSON.stringify(v)); }catch(e){ alert("Stockage plein — impossible d'enregistrer. Supprime une carte ajoutée ou exporte ta sauvegarde."); } }
-};
+/* Sauvegarde adaptative :
+   - par défaut, on enregistre à CHAQUE changement (les écritures d'une même action sont regroupées) ;
+   - si une écriture dépasse 1 s (données devenues lourdes, ex. grandes images de cartes),
+     on bascule sur une sauvegarde toutes les 5 minutes, et on retient ce choix ;
+   - dans tous les cas on enregistre aussi à la fermeture / au masquage de l'onglet. */
+const store = (function(){
+  const PREFIX = "aldar_";
+  const THRESHOLD_MS = 1000;        // au-delà d'1 s pour une sauvegarde -> mode intervalle
+  const INTERVAL_MS  = 5 * 60 * 1000; // 5 minutes
+  const mem = {};                   // dernières valeurs (sérialisées) de la session
+  let dirty = {};                   // clés en attente d'écriture
+  let mode = "each";                // "each" (à chaque changement) ou "interval" (toutes les 5 min)
+  let flushTimer = null, intervalTimer = null, quotaWarned = false;
+  const now = () => (window.performance && performance.now) ? performance.now() : Date.now();
+  const has = (o,k) => Object.prototype.hasOwnProperty.call(o,k);
+
+  function flush(){
+    const keys = Object.keys(dirty);
+    if(!keys.length) return;
+    const t0 = now();
+    try{
+      for(let i=0;i<keys.length;i++){ localStorage.setItem(PREFIX+keys[i], mem[keys[i]]); }
+      dirty = {};
+    }catch(e){
+      if(!quotaWarned){ quotaWarned = true; alert("Stockage plein — impossible d'enregistrer. Supprime une carte ajoutée ou exporte ta sauvegarde."); }
+      return;
+    }
+    if(mode==="each" && (now()-t0) > THRESHOLD_MS) enterIntervalMode();
+  }
+  function enterIntervalMode(){
+    mode = "interval";
+    if(flushTimer){ clearTimeout(flushTimer); flushTimer = null; }
+    if(!intervalTimer) intervalTimer = setInterval(flush, INTERVAL_MS);
+    try{ localStorage.setItem(PREFIX+"savemode", "interval"); }catch(e){}
+  }
+
+  // reprendre le mode intervalle s'il a déjà été déclenché lors d'une session précédente
+  try{ if(localStorage.getItem(PREFIX+"savemode")==="interval") mode = "interval"; }catch(e){}
+  if(mode==="interval" && !intervalTimer) intervalTimer = setInterval(flush, INTERVAL_MS);
+
+  ["beforeunload","pagehide"].forEach(ev => window.addEventListener(ev, flush));
+  document.addEventListener("visibilitychange", () => { if(document.visibilityState==="hidden") flush(); });
+
+  return {
+    get(k,f){
+      let v = has(mem,k) ? mem[k] : null;
+      if(v===null){ try{ v = localStorage.getItem(PREFIX+k); }catch(e){ v = null; } }
+      if(v===null || v===undefined) return f;
+      try{ return JSON.parse(v); }catch(e){ return f; }
+    },
+    set(k,v){
+      mem[k] = JSON.stringify(v);
+      dirty[k] = true;
+      if(mode==="each"){
+        if(flushTimer) clearTimeout(flushTimer);
+        flushTimer = setTimeout(flush, 0);   // regroupe les changements d'une même action en une écriture
+      }
+      // en mode intervalle : le minuteur de 5 min (et la fermeture de l'onglet) s'en chargent
+    }
+  };
+})();
 let hp = store.get("hp", {cur:47, nl:47, max:47});
 let money = store.get("money", {pogne:400, banque:4000});
 let skillOv = store.get("skillov", {});
