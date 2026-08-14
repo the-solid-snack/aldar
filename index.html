@@ -765,7 +765,7 @@ function renderAtk(){
   const stunDD = 10 + mod("SAG") + Math.floor(ch.level/2);
   if(!E){
     $("#atkTable").innerHTML = `
-      <tr><td>Attaque (BBA ${ch.bba} + DEX ${mod("DEX")} + ${ch.atkMisc})</td><td>${d.atk? `<span class="atkbuff">${sign(atkTot)}</span>`:sign(atkTot)}</td></tr>
+      <tr><td title="Attaque = BBA ${ch.bba} + DEX ${mod("DEX")} + ${ch.atkMisc}">Attaque <span style="color:var(--ink3); font-size:11px; font-weight:400; white-space:nowrap">(BBA ${ch.bba} + DEX ${mod("DEX")} + ${ch.atkMisc})</span></td><td>${d.atk? `<span class="atkbuff">${sign(atkTot)}</span>`:sign(atkTot)}</td></tr>
       <tr><td>Poings <span style="color:var(--ink3)">${esc(ch.diceP)}</span></td><td>${esc(ch.diceP)}${sign(dmgB)}${d.dmg? ` <span class="atkbuff">▲</span>`:""}</td></tr>
       <tr><td>Pieds <span style="color:var(--ink3)">${esc(ch.diceK)}</span></td><td>${esc(ch.diceK)}${sign(dmgB)}${d.dmg? ` <span class="atkbuff">▲</span>`:""}</td></tr>
       <tr><td>Déluge de coups</td><td style="font-size:13px; font-weight:600">2 attaques</td></tr>
