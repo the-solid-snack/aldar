@@ -1,0 +1,10 @@
+{
+  "name": "aldar-api",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "@azure/data-tables": "^13.2.2",
+    "@azure/storage-blob": "^12.17.0"
+  }
+}
