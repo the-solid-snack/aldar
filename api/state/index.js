@@ -1,24 +1,18 @@
-const { BlobServiceClient } = require("@azure/storage-blob");
-const crypto = require("crypto");
+const { TableClient } = require("@azure/data-tables");
 
-const CONTAINER_NAME = "maps";
+const TABLE_NAME = "aldarstate";
+const PARTITION_KEY = "aldar";
+const ROW_KEY = "state";
+
+function getTableClient() {
+  const conn = process.env.AZURE_STORAGE_CONNECTION_STRING;
+  return TableClient.fromConnectionString(conn, TABLE_NAME, { allowInsecureConnection: false });
+}
 
 function checkPasscode(req) {
   const expected = process.env.ALDAR_PASSCODE;
   const supplied = req.headers["x-aldar-passcode"];
   return expected && supplied && expected === supplied;
-}
-
-function parseDataUrl(dataUrl) {
-  const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl || "");
-  if (!m) return null;
-  return { contentType: m[1], buffer: Buffer.from(m[2], "base64") };
-}
-
-function extFor(contentType) {
-  if (contentType === "image/webp") return "webp";
-  if (contentType === "image/png") return "png";
-  return "jpg";
 }
 
 module.exports = async function (context, req) {
@@ -27,34 +21,48 @@ module.exports = async function (context, req) {
     return;
   }
 
-  const { name, dataUrl } = req.body || {};
-  const parsed = parseDataUrl(dataUrl);
-  if (!parsed) {
-    context.res = { status: 400, body: { error: "invalid dataUrl" } };
+  const client = getTableClient();
+  try {
+    await client.createTable();
+  } catch (e) {
+    // table already exists — fine
+  }
+
+  if (req.method === "GET") {
+    try {
+      const entity = await client.getEntity(PARTITION_KEY, ROW_KEY);
+      context.res = {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.parse(entity.data),
+      };
+    } catch (e) {
+      if (e.statusCode === 404) {
+        context.res = { status: 200, body: null };
+      } else {
+        context.log.error(e);
+        context.res = { status: 500, body: { error: "read failed" } };
+      }
+    }
     return;
   }
 
-  try {
-    const conn = process.env.AZURE_STORAGE_CONNECTION_STRING;
-    const blobService = BlobServiceClient.fromConnectionString(conn);
-    const container = blobService.getContainerClient(CONTAINER_NAME);
-    await container.createIfNotExists({ access: "blob" }); // anonymous read on blobs only
-
-    const safeName = (name || "carte").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
-    const blobName = `${Date.now()}_${crypto.randomBytes(4).toString("hex")}_${safeName}.${extFor(parsed.contentType)}`;
-
-    const blockBlob = container.getBlockBlobClient(blobName);
-    await blockBlob.uploadData(parsed.buffer, {
-      blobHTTPHeaders: { blobContentType: parsed.contentType },
-    });
-
-    context.res = {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-      body: { url: blockBlob.url },
-    };
-  } catch (e) {
-    context.log.error(e);
-    context.res = { status: 500, body: { error: "upload failed" } };
+  if (req.method === "POST") {
+    try {
+      const payload = req.body;
+      const entity = {
+        partitionKey: PARTITION_KEY,
+        rowKey: ROW_KEY,
+        data: JSON.stringify(payload),
+      };
+      await client.upsertEntity(entity, "Replace");
+      context.res = { status: 204 };
+    } catch (e) {
+      context.log.error(e);
+      context.res = { status: 500, body: { error: "write failed" } };
+    }
+    return;
   }
+
+  context.res = { status: 405 };
 };
