@@ -573,6 +573,12 @@ const store = (function(){
   try{ lastChangeDate = localStorage.getItem(PREFIX+"lastChange"); }catch(e){}
   if(!lastChangeDate) lastChangeDate = "1970-01-01T00:00:00.000Z";
 
+  // tant que la page s'initialise (valeurs par défaut, migrations), les écritures ne doivent
+  // pas être vues comme un "vrai" changement local — sinon elles avancent lastChangeDate avant
+  // même que le premier pullStateFromServer() ait pu comparer avec le serveur, et une fiche
+  // jamais ouverte sur cet appareil n'y récupérerait alors jamais l'état déjà synchronisé.
+  let initializing = true;
+
   function flush(){
     const keys = Object.keys(dirty);
     if(!keys.length) return;
@@ -580,14 +586,16 @@ const store = (function(){
     try{
       for(let i=0;i<keys.length;i++){ localStorage.setItem(PREFIX+keys[i], mem[keys[i]]); }
       dirty = {};
-      lastChangeDate = new Date().toISOString();
-      try{ localStorage.setItem(PREFIX+"lastChange", lastChangeDate); }catch(e){}
+      if(!initializing){
+        lastChangeDate = new Date().toISOString();
+        try{ localStorage.setItem(PREFIX+"lastChange", lastChangeDate); }catch(e){}
+      }
     }catch(e){
       if(!quotaWarned){ quotaWarned = true; alert("Stockage plein — impossible d'enregistrer. Supprime une carte ajoutée ou exporte ta sauvegarde."); }
       return;
     }
     if(mode==="each" && (now()-t0) > THRESHOLD_MS) enterIntervalMode();
-    if(typeof scheduleServerSync==="function") scheduleServerSync();
+    if(!initializing && typeof scheduleServerSync==="function") scheduleServerSync();
   }
   function enterIntervalMode(){
     mode = "interval";
@@ -629,7 +637,10 @@ const store = (function(){
       });
       lastChangeDate = date;
       try{ localStorage.setItem(PREFIX+"lastChange", date); }catch(e){}
-    }
+    },
+    // à appeler une fois la première tentative de synchro (pullStateFromServer) terminée :
+    // les écritures locales comptent alors comme de vrais changements.
+    endInit(){ initializing = false; }
   };
 })();
 let hp = store.get("hp", {cur:47, nl:47, max:47});
@@ -1316,7 +1327,7 @@ async function uploadMapImage(name, dataUrl){
   }catch(e){ console.warn("Envoi de la carte échoué :", e); return null; }
 }
 
-pullStateFromServer();
+pullStateFromServer().finally(()=> store.endInit());
 document.addEventListener("visibilitychange", () => { if(document.visibilityState==="visible") pullStateFromServer(); });
 setInterval(() => { if(document.visibilityState==="visible") pullStateFromServer(); }, 30000);
 </script>
