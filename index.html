@@ -567,6 +567,12 @@ const store = (function(){
   const now = () => (window.performance && performance.now) ? performance.now() : Date.now();
   const has = (o,k) => Object.prototype.hasOwnProperty.call(o,k);
 
+  // horodatage du dernier changement RÉEL des données locales (distinct de "maintenant") :
+  // sert à savoir si une version reçue du serveur est plus récente que la nôtre.
+  let lastChangeDate = null;
+  try{ lastChangeDate = localStorage.getItem(PREFIX+"lastChange"); }catch(e){}
+  if(!lastChangeDate) lastChangeDate = "1970-01-01T00:00:00.000Z";
+
   function flush(){
     const keys = Object.keys(dirty);
     if(!keys.length) return;
@@ -574,6 +580,8 @@ const store = (function(){
     try{
       for(let i=0;i<keys.length;i++){ localStorage.setItem(PREFIX+keys[i], mem[keys[i]]); }
       dirty = {};
+      lastChangeDate = new Date().toISOString();
+      try{ localStorage.setItem(PREFIX+"lastChange", lastChangeDate); }catch(e){}
     }catch(e){
       if(!quotaWarned){ quotaWarned = true; alert("Stockage plein — impossible d'enregistrer. Supprime une carte ajoutée ou exporte ta sauvegarde."); }
       return;
@@ -610,6 +618,17 @@ const store = (function(){
         flushTimer = setTimeout(flush, 0);   // regroupe les changements d'une même action en une écriture
       }
       // en mode intervalle : le minuteur de 5 min (et la fermeture de l'onglet) s'en chargent
+    },
+    lastChangeDate(){ return lastChangeDate; },
+    // applique un état reçu du serveur SANS le repousser vers le serveur juste après
+    // (contrairement à set(), qui marque la clé "dirty" et redéclenche une synchro)
+    applyRemote(kv, date){
+      Object.keys(kv).forEach(k=>{
+        mem[k] = JSON.stringify(kv[k]);
+        try{ localStorage.setItem(PREFIX+k, mem[k]); }catch(e){}
+      });
+      lastChangeDate = date;
+      try{ localStorage.setItem(PREFIX+"lastChange", date); }catch(e){}
     }
   };
 })();
@@ -1159,7 +1178,7 @@ $("#mapFile").addEventListener("change", ()=>{
 /* ---------- sauvegarde export/import ---------- */
 const SAVE_KEYS = ["hp","money","skillov","notes2","inv2","char","feats2","future2","langs2","todo2","maps2","mapshidden","mapnames","buffdefs","buffact","pa","statadj"];
 function dumpState(){
-  const o = {_fiche:"aldar", _date:new Date().toISOString()};
+  const o = {_fiche:"aldar", _date:store.lastChangeDate()};
   SAVE_KEYS.forEach(k=>o[k]=store.get(k,null));
   return JSON.stringify(o);
 }
@@ -1255,11 +1274,12 @@ async function pushStateToServer(){
   const pass = getPasscode();
   if(!pass) return;
   try{
-    await fetch("/api/state", {
+    const r = await fetch("/api/state", {
       method: "POST",
       headers: {"Content-Type":"application/json", "x-aldar-passcode": pass},
       body: dumpState()
     });
+    if(!r.ok) console.warn("Synchro (envoi) refusée par le serveur : HTTP", r.status);
   }catch(e){ console.warn("Synchro (envoi) échouée :", e); }
 }
 
@@ -1268,12 +1288,13 @@ async function pullStateFromServer(){
   if(!pass) return;
   try{
     const r = await fetch("/api/state", { headers: {"x-aldar-passcode": pass} });
-    if(!r.ok) return;
+    if(!r.ok){ console.warn("Synchro (réception) refusée par le serveur : HTTP", r.status); return; }
     const server = await r.json();
     if(!server || !server._date) return;
-    const localDump = JSON.parse(dumpState());
-    if(new Date(server._date) > new Date(localDump._date)){
-      SAVE_KEYS.forEach(k=>{ if(server[k]!==undefined && server[k]!==null) store.set(k, server[k]); });
+    if(new Date(server._date) > new Date(store.lastChangeDate())){
+      const kv = {};
+      SAVE_KEYS.forEach(k=>{ if(server[k]!==undefined && server[k]!==null) kv[k] = server[k]; });
+      store.applyRemote(kv, server._date);
       reloadAll();
       console.log("Synchro : état plus récent récupéré du serveur.");
     }
@@ -1296,6 +1317,8 @@ async function uploadMapImage(name, dataUrl){
 }
 
 pullStateFromServer();
+document.addEventListener("visibilitychange", () => { if(document.visibilityState==="visible") pullStateFromServer(); });
+setInterval(() => { if(document.visibilityState==="visible") pullStateFromServer(); }, 30000);
 </script>
 </body>
 </html>
