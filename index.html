@@ -579,6 +579,7 @@ const store = (function(){
       return;
     }
     if(mode==="each" && (now()-t0) > THRESHOLD_MS) enterIntervalMode();
+    if(typeof scheduleServerSync==="function") scheduleServerSync();
   }
   function enterIntervalMode(){
     mode = "interval";
@@ -1140,8 +1141,14 @@ $("#mapFile").addEventListener("change", ()=>{
       cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
       let u = cv.toDataURL("image/webp", 0.78);
       if(u.length < 100) u = cv.toDataURL("image/jpeg", 0.8);
-      mapsUser.push({name: f.name.replace(/\.[^.]+$/,""), u});
+      const name = f.name.replace(/\.[^.]+$/,"");
+      const entry = {name, u};
+      mapsUser.push(entry);
       renderMaps();
+      store.set("maps2", mapsUser);
+      uploadMapImage(name, u).then(url=>{
+        if(url){ entry.u = url; store.set("maps2", mapsUser); renderMaps(); }
+      });
     };
     img.src = rd.result;
   };
@@ -1227,6 +1234,68 @@ function renderAll(){
 }
 renderAll();
 console.log("Fiche Aldar v5 chargée — CA", caBase(), "buffs:", buffDefs.length, "actifs:", buffAct.length, "notes:", notes.length, "objets:", inv.length, "cartes:", allMaps().length);
+
+/* ---------- synchro serveur (Azure Static Web App /api) ---------- */
+function getPasscode(){
+  let p = localStorage.getItem("aldar_passcode");
+  if(p===null){
+    p = prompt("Code d'accès pour la synchro entre appareils (laisse vide pour rester en local uniquement) :") || "";
+    localStorage.setItem("aldar_passcode", p);
+  }
+  return p || null;
+}
+
+let __syncTimer = null;
+function scheduleServerSync(){
+  if(__syncTimer) clearTimeout(__syncTimer);
+  __syncTimer = setTimeout(pushStateToServer, 1500);
+}
+
+async function pushStateToServer(){
+  const pass = getPasscode();
+  if(!pass) return;
+  try{
+    await fetch("/api/state", {
+      method: "POST",
+      headers: {"Content-Type":"application/json", "x-aldar-passcode": pass},
+      body: dumpState()
+    });
+  }catch(e){ console.warn("Synchro (envoi) échouée :", e); }
+}
+
+async function pullStateFromServer(){
+  const pass = getPasscode();
+  if(!pass) return;
+  try{
+    const r = await fetch("/api/state", { headers: {"x-aldar-passcode": pass} });
+    if(!r.ok) return;
+    const server = await r.json();
+    if(!server || !server._date) return;
+    const localDump = JSON.parse(dumpState());
+    if(new Date(server._date) > new Date(localDump._date)){
+      SAVE_KEYS.forEach(k=>{ if(server[k]!==undefined && server[k]!==null) store.set(k, server[k]); });
+      reloadAll();
+      console.log("Synchro : état plus récent récupéré du serveur.");
+    }
+  }catch(e){ console.warn("Synchro (réception) échouée :", e); }
+}
+
+async function uploadMapImage(name, dataUrl){
+  const pass = getPasscode();
+  if(!pass) return null;
+  try{
+    const r = await fetch("/api/mapUpload", {
+      method: "POST",
+      headers: {"Content-Type":"application/json", "x-aldar-passcode": pass},
+      body: JSON.stringify({name, dataUrl})
+    });
+    if(!r.ok) return null;
+    const j = await r.json();
+    return j.url || null;
+  }catch(e){ console.warn("Envoi de la carte échoué :", e); return null; }
+}
+
+pullStateFromServer();
 </script>
 </body>
 </html>
