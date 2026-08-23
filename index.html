@@ -102,6 +102,7 @@ input.amt{width:52px; font:inherit; font-size:14px; text-align:center; padding:4
 .stat .md{font-size:22px; font-weight:800}
 .stat .sc{font-size:11.5px; color:var(--ink3)}
 .stat input{width:44px; font:inherit; font-size:14px; text-align:center; padding:2px; border:1px solid var(--border2); border-radius:6px; background:#fff}
+.stat input.itadj{width:32px; font-size:12px; margin-left:2px; border-color:var(--buff); color:var(--buff)}
 .stat.adj{border-color:var(--buff); background:var(--buffbg)}
 .stat.adj .md{color:var(--buff)}
 .stat .base{font-size:10px; color:var(--ink3)}
@@ -306,6 +307,7 @@ table.inv textarea{resize:vertical; min-height:44px}
       <div class="bigval" id="caVal"></div>
       <div class="sub">contact&nbsp;? garde SAG &amp; DEX</div>
       <div class="breakdown" id="caBrk"></div>
+      <div class="addline" id="caAdd" hidden><button class="b tiny heal" id="caAddBtn">+ Ajouter un bonus</button></div>
     </div>
 
     <!-- Saves -->
@@ -458,7 +460,7 @@ const CHAR_SEED = {
   scores:{FOR:15, DEX:16, CON:16, INT:10, SAG:16, CHA:10},
   saveClass:8, initMisc:1,
   bba:5, atkMisc:2, dmgMisc:2, diceP:"1D8", diceK:"1D10", crit:"crit 18–20 / ×2",
-  ca:{armor:6, ring:4, barde:1, misc:0}
+  ca:{armor:6, ring:4, barde:1, misc:0, extra:[]}
 };
 const BUFFS_SEED = [
  {id:"atk",  n:"Assistance divine · ATK",   eff:{atk:1}},
@@ -660,6 +662,7 @@ let buffDefs = store.get("buffdefs", null);
 let buffAct = store.get("buffact", null);
 let pa = store.get("pa", null);
 let statAdj = store.get("statadj", {});
+let itemAdj = store.get("itemadj", {});
 
 if(!notes){ notes = NOTES_SEED.map(t=>({t})); store.set("notes2", notes); }
 if(!inv){
@@ -669,6 +672,7 @@ if(!inv){
   store.set("inv2", inv);
 }
 if(!ch){ ch = JSON.parse(JSON.stringify(CHAR_SEED)); store.set("char", ch); }
+if(!ch.ca.extra) ch.ca.extra = [];
 if(!feats){ feats = JSON.parse(JSON.stringify(FEATS_SEED)); store.set("feats2", feats); }
 if(!future){ future = JSON.parse(JSON.stringify(FUTURE_SEED)); store.set("future2", future); }
 if(!langs){ langs = LANGS_SEED.slice(); store.set("langs2", langs); }
@@ -687,8 +691,9 @@ const $ = s => document.querySelector(s);
 const sign = n => (n>=0? "+"+n : ""+n);
 const clamp = (n,a,b) => Math.min(b, Math.max(a,n));
 const esc = s => (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-const eff = k => ch.scores[k] + (statAdj[k]||0);
+const eff = k => ch.scores[k] + (statAdj[k]||0) + (itemAdj[k]||0);
 const mod = k => { const s = eff(k); return s<10? 0 : Math.floor((s-10)/2); };
+const atkAbil = () => mod("FOR")>=mod("DEX")? "FOR" : "DEX"; // attaque en finesse : on garde le meilleur des deux
 const editing = {stats:false, ca:false, saves:false, atk:false, skills:false, feats:false, future:false, langs:false, todo:false, buffs:false};
 
 function derived(){
@@ -732,7 +737,8 @@ function renderHP(){
   store.set("hp", hp);
 }
 
-function caBase(){ return 10 + ch.ca.armor + mod("SAG") + mod("DEX") + ch.ca.ring + ch.ca.barde + ch.ca.misc; }
+function caExtraTotal(){ return (ch.ca.extra||[]).reduce((s,x)=>s+(+x.v||0), 0); }
+function caBase(){ return 10 + ch.ca.armor + mod("SAG") + mod("DEX") + ch.ca.ring + ch.ca.barde + ch.ca.misc + caExtraTotal(); }
 
 function renderCA(){
   const d = derived();
@@ -746,8 +752,14 @@ function renderCA(){
     <div><span>Anneau d'armure du Héron</span>${inp("caRing",ch.ca.ring)}</div>
     <div><span>Niveau 5 de barde</span>${inp("caBarde",ch.ca.barde)}</div>`;
   if(E || ch.ca.misc) brk += `<div><span>Divers</span>${inp("caMisc",ch.ca.misc)}</div>`;
+  (ch.ca.extra||[]).forEach((x,i)=>{
+    brk += E
+      ? `<div><input class="wide" data-caxn="${i}" value="${esc(x.n)}" placeholder="Nom du bonus"><input type="number" data-caxv="${i}" value="${x.v||0}"> <button class="iconb del" data-caxdel="${i}" title="Supprimer">🗑</button></div>`
+      : `<div><span>${esc(x.n)||"Bonus"}</span><span>${sign(+x.v||0)}</span></div>`;
+  });
   buffDefs.forEach(b=>{ if(buffAct.includes(b.id) && b.eff.ca) brk += `<div class="bx"><span>${esc(b.n)}</span><span>${sign(+b.eff.ca)}</span></div>`; });
   $("#caBrk").innerHTML = brk;
+  $("#caAdd").hidden = !E;
   if(E){
     ["caArmor","caRing","caBarde","caMisc"].forEach(id=>{
       const el = document.getElementById(id);
@@ -759,6 +771,20 @@ function renderCA(){
         saveChar();
       });
     });
+    document.querySelectorAll("[data-caxn]").forEach(inp=>inp.addEventListener("change", ()=>{
+      ch.ca.extra[+inp.dataset.caxn].n = inp.value.trim();
+      saveChar();
+    }));
+    document.querySelectorAll("[data-caxv]").forEach(inp=>inp.addEventListener("change", ()=>{
+      ch.ca.extra[+inp.dataset.caxv].v = +inp.value||0;
+      saveChar();
+    }));
+    document.querySelectorAll("[data-caxdel]").forEach(b=>b.addEventListener("click", ()=>{
+      const i = +b.dataset.caxdel;
+      if(!confirm(`Supprimer le bonus « ${ch.ca.extra[i].n||"sans nom"} » ?`)) return;
+      ch.ca.extra.splice(i,1);
+      saveChar();
+    }));
   }
 }
 
@@ -791,12 +817,13 @@ function renderAtk(){
   const d = derived();
   const E = editing.atk;
   $("#critLbl").textContent = ch.crit;
-  const atkTot = ch.bba + mod("DEX") + ch.atkMisc + d.atk;
+  const ab = atkAbil();
+  const atkTot = ch.bba + mod(ab) + ch.atkMisc + d.atk;
   const dmgB = mod("DEX") + ch.dmgMisc + d.dmg;
   const stunDD = 10 + mod("SAG") + Math.floor(ch.level/2);
   if(!E){
     $("#atkTable").innerHTML = `
-      <tr><td title="Attaque = BBA ${ch.bba} + DEX ${mod("DEX")} + ${ch.atkMisc}">Attaque <span style="color:var(--ink3); font-size:11px; font-weight:400; white-space:nowrap">(BBA ${ch.bba} + DEX ${mod("DEX")} + ${ch.atkMisc})</span></td><td>${d.atk? `<span class="atkbuff">${sign(atkTot)}</span>`:sign(atkTot)}</td></tr>
+      <tr><td title="Attaque = BBA ${ch.bba} + ${ab} ${mod(ab)} + ${ch.atkMisc} (meilleur de FOR/DEX)">Attaque <span style="color:var(--ink3); font-size:11px; font-weight:400; white-space:nowrap">(BBA ${ch.bba} + ${ab} ${mod(ab)} + ${ch.atkMisc})</span></td><td>${d.atk? `<span class="atkbuff">${sign(atkTot)}</span>`:sign(atkTot)}</td></tr>
       <tr><td>Poings <span style="color:var(--ink3)">${esc(ch.diceP)}</span></td><td>${esc(ch.diceP)}${sign(dmgB)}${d.dmg? ` <span class="atkbuff">▲</span>`:""}</td></tr>
       <tr><td>Pieds <span style="color:var(--ink3)">${esc(ch.diceK)}</span></td><td>${esc(ch.diceK)}${sign(dmgB)}${d.dmg? ` <span class="atkbuff">▲</span>`:""}</td></tr>
       <tr><td>Déluge de coups</td><td style="font-size:13px; font-weight:600">2 attaques</td></tr>
@@ -804,7 +831,7 @@ function renderAtk(){
   } else {
     $("#atkTable").innerHTML = `
       <tr><td>BBA</td><td><input type="number" id="atBba" value="${ch.bba}"></td></tr>
-      <tr><td>Attaque : divers (en plus de DEX)</td><td><input type="number" id="atMisc" value="${ch.atkMisc}"></td></tr>
+      <tr><td>Attaque : divers (en plus du meilleur de FOR/DEX)</td><td><input type="number" id="atMisc" value="${ch.atkMisc}"></td></tr>
       <tr><td>Dégâts : divers (en plus de DEX)</td><td><input type="number" id="atDmgM" value="${ch.dmgMisc}"></td></tr>
       <tr><td>Dé poings / pieds</td><td><input class="wide" id="atDiceP" value="${esc(ch.diceP)}"> <input class="wide" id="atDiceK" value="${esc(ch.diceK)}"></td></tr>
       <tr><td>Critique (texte)</td><td><input class="wide" style="width:120px" id="atCrit" value="${esc(ch.crit)}"></td></tr>`;
@@ -822,13 +849,17 @@ function renderAtk(){
 
 function renderStats(){
   store.set("statadj", statAdj);
+  store.set("itemadj", itemAdj);
   const E = editing.stats;
   $("#stats").innerHTML = Object.keys(ch.scores).map(k=>{
-    const a = statAdj[k]||0;
+    const a = statAdj[k]||0, it = itemAdj[k]||0;
+    const bits = [];
+    if(it) bits.push(`objet ${sign(it)}`);
+    if(a) bits.push(`temp ${sign(a)}`);
     const sc = E
-      ? `<input type="number" data-sc="${k}" value="${ch.scores[k]}">`
-      : (a? `${eff(k)} <span class="base">(base ${ch.scores[k]})</span>` : ch.scores[k]);
-    return `<div class="stat ${a? 'adj':''}"><div class="lb">${k}</div><div class="md">${sign(mod(k))}</div>
+      ? `<input type="number" data-sc="${k}" value="${ch.scores[k]}"> <input class="itadj" type="number" data-it="${k}" value="${it}" title="Bonus d'objet (persiste au reset)">`
+      : (bits.length? `${eff(k)} <span class="base">(base ${ch.scores[k]}, ${bits.join(", ")})</span>` : ch.scores[k]);
+    return `<div class="stat ${a||it? 'adj':''}"><div class="lb">${k}</div><div class="md">${sign(mod(k))}</div>
      <div class="sc">${sc}</div>
      <div class="adjrow"><button data-adj="${k}" data-d="-1" title="Débuff temporaire −1 ${k}">−</button><button data-adj="${k}" data-d="1" title="Buff temporaire +1 ${k}">+</button></div></div>`;
   }).join("");
@@ -836,6 +867,11 @@ function renderStats(){
     document.querySelectorAll("[data-sc]").forEach(inp=>inp.addEventListener("change", ()=>{
       ch.scores[inp.dataset.sc] = +inp.value||ch.scores[inp.dataset.sc];
       saveChar();
+    }));
+    document.querySelectorAll("[data-it]").forEach(inp=>inp.addEventListener("change", ()=>{
+      const k = inp.dataset.it, v = +inp.value||0;
+      if(v) itemAdj[k] = v; else delete itemAdj[k];
+      renderStats(); renderCombat();
     }));
   }
   document.querySelectorAll("[data-adj]").forEach(b=>b.addEventListener("click", ()=>{
@@ -899,6 +935,13 @@ $("#buffAddBtn").addEventListener("click", ()=>{
   buffDefs.push({id:"b"+Date.now(), n:"", eff:{}});
   renderBuffs();
   const last = document.querySelector("#buffBar .buffedit:last-child .bn");
+  if(last) last.focus();
+});
+$("#caAddBtn").addEventListener("click", ()=>{
+  if(!ch.ca.extra) ch.ca.extra = [];
+  ch.ca.extra.push({n:"", v:0});
+  saveChar();
+  const last = document.querySelector("#caBrk [data-caxn]:last-of-type");
   if(last) last.focus();
 });
 
@@ -1187,7 +1230,7 @@ $("#mapFile").addEventListener("change", ()=>{
 });
 
 /* ---------- sauvegarde export/import ---------- */
-const SAVE_KEYS = ["hp","money","skillov","notes2","inv2","char","feats2","future2","langs2","todo2","maps2","mapshidden","mapnames","buffdefs","buffact","pa","statadj"];
+const SAVE_KEYS = ["hp","money","skillov","notes2","inv2","char","feats2","future2","langs2","todo2","maps2","mapshidden","mapnames","buffdefs","buffact","pa","statadj","itemadj"];
 function dumpState(){
   const o = {_fiche:"aldar", _date:store.lastChangeDate()};
   SAVE_KEYS.forEach(k=>o[k]=store.get(k,null));
@@ -1200,7 +1243,8 @@ function reloadAll(){
   langs = store.get("langs2",langs); todo = store.get("todo2",todo);
   mapsUser = store.get("maps2",[]); mapsHidden = store.get("mapshidden",[]); mapNames = store.get("mapnames",{});
   buffDefs = store.get("buffdefs",buffDefs); buffAct = store.get("buffact",buffAct); pa = store.get("pa",pa);
-  statAdj = store.get("statadj",{});
+  statAdj = store.get("statadj",{}); itemAdj = store.get("itemadj",{});
+  if(!ch.ca.extra) ch.ca.extra = [];
   noteEditIdx = -1; invEditIdx = -1;
   renderAll();
 }
