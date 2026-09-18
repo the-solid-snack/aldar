@@ -224,6 +224,7 @@ table.inv textarea{resize:vertical; min-height:44px}
 .hint{font-size:12px; color:var(--ink3); margin-top:8px; font-style:italic}
 .reset-link{font-size:11.5px; color:var(--ink3); background:none; border:none; cursor:pointer; text-decoration:underline; font-family:inherit}
 .reset-link:hover{color:var(--ember)}
+.reset-link .delta{color:var(--buff); font-weight:800; text-decoration:none}
 
 /* ------- portrait & cartes ------- */
 .headrow{display:flex; gap:18px; align-items:flex-start; justify-content:space-between}
@@ -460,7 +461,7 @@ const CHAR_SEED = {
   scores:{FOR:15, DEX:16, CON:16, INT:10, SAG:16, CHA:10},
   saveClass:8, initMisc:1,
   bba:5, atkMisc:2, dmgMisc:2, diceP:"1D8", diceK:"1D10", crit:"crit 18–20 / ×2",
-  ca:{armor:6, ring:4, barde:1, misc:0, extra:[]}
+  ca:{armor:6, ring:4, moine:1, misc:0, extra:[]}
 };
 const BUFFS_SEED = [
  {id:"atk",  n:"Assistance divine · ATK",   eff:{atk:1}},
@@ -468,8 +469,12 @@ const BUFFS_SEED = [
  {id:"comp", n:"Assistance divine · Compé", eff:{comp:1}},
  {id:"foi",  n:"Bouclier de la foi",        eff:{ca:2}},
  {id:"res",  n:"Résistance (1 min)",        eff:{save:1, init:1}},
- {id:"prot", n:"Protection c. le mal",      eff:{ca:2, save:2}}
+ {id:"prot", n:"Protection c. le mal",      eff:{ca:2, save:2}},
+ {id:"ours",   n:"Endurance de l'ours",      eff:{CON:4}},
+ {id:"chat",   n:"Grâce féline",             eff:{DEX:4}},
+ {id:"taureau",n:"Force de taureau",         eff:{FOR:4}}
 ];
+const ABIL = ["FOR","DEX","CON","INT","SAG","CHA"];
 const SKILLS_DEF = [
  ["Acrobaties","DEX",2,0],["Alchimiste","SAG",0,0],["Architecture/ingénierie","INT",0,0],
  ["Bluff","CHA",6,0],["Concentration","CON",0,0],["Conn. 1 — Forge","INT",0,0],
@@ -672,7 +677,12 @@ if(!inv){
   store.set("inv2", inv);
 }
 if(!ch){ ch = JSON.parse(JSON.stringify(CHAR_SEED)); store.set("char", ch); }
-if(!ch.ca.extra) ch.ca.extra = [];
+function fixChar(){
+  if(!ch.ca.extra) ch.ca.extra = [];
+  /* la fiche parlait d’un « niveau 5 de barde » : Aldar est moine, la clé est renommée. */
+  if(ch.ca.moine===undefined){ ch.ca.moine = +ch.ca.barde||0; delete ch.ca.barde; store.set("char", ch); }
+}
+fixChar();
 if(!feats){ feats = JSON.parse(JSON.stringify(FEATS_SEED)); store.set("feats2", feats); }
 if(!future){ future = JSON.parse(JSON.stringify(FUTURE_SEED)); store.set("future2", future); }
 if(!langs){ langs = LANGS_SEED.slice(); store.set("langs2", langs); }
@@ -685,14 +695,34 @@ if(buffAct===null || pa===null){
   pa = old.pa||0;
   store.set("buffact", buffAct); store.set("pa", pa);
 }
+/* les buffs de caractéristique sont arrivés après coup : on les ajoute une seule fois au
+   répertoire déjà enregistré, sans ressusciter ceux qui auraient été supprimés entre-temps.
+   Rejoué après l’import d’une sauvegarde antérieure à leur arrivée. */
+function seedAbilBuffs(){
+  if(store.get("buffseed_abil", false)) return;
+  BUFFS_SEED.forEach(sd=>{
+    if(ABIL.some(k=>sd.eff[k]) && !buffDefs.some(b=>b.id===sd.id)) buffDefs.push(JSON.parse(JSON.stringify(sd)));
+  });
+  store.set("buffdefs", buffDefs); store.set("buffseed_abil", true);
+}
+seedAbilBuffs();
 
 /* ================== HELPERS ================== */
 const $ = s => document.querySelector(s);
 const sign = n => (n>=0? "+"+n : ""+n);
 const clamp = (n,a,b) => Math.min(b, Math.max(a,n));
 const esc = s => (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-const eff = k => ch.scores[k] + (statAdj[k]||0) + (itemAdj[k]||0);
-const mod = k => { const s = eff(k); return s<10? 0 : Math.floor((s-10)/2); };
+const buffAbil = k => buffDefs.reduce((n,b)=> n + (buffAct.includes(b.id)? (+b.eff[k]||0) : 0), 0);
+const eff = k => ch.scores[k] + (statAdj[k]||0) + (itemAdj[k]||0) + buffAbil(k);
+const modOf = s => s<10? 0 : Math.floor((s-10)/2);
+const mod = k => modOf(eff(k));
+/* Un point de modificateur de CON vaut 1 PV par niveau, gagné ou perdu.
+   - CON permanente (score de base + bonus d’objet) : on corrige directement les PV max.
+   - CON temporaire (buffs + ajustements « temp ») : PV temporaires par-dessus les PV max. */
+const conPermMod = () => modOf(ch.scores.CON + (itemAdj.CON||0));
+const conTempMod = () => modOf(eff("CON")) - conPermMod();
+const hpTemp = () => ch.level * conTempMod();
+const hpTotal = () => hp.max + (hp.tb||0);
 const atkAbil = () => mod("FOR")>=mod("DEX")? "FOR" : "DEX"; // attaque en finesse : on garde le meilleur des deux
 const editing = {stats:false, ca:false, saves:false, atk:false, skills:false, feats:false, future:false, langs:false, todo:false, buffs:false};
 
@@ -704,7 +734,8 @@ function derived(){
 }
 function num(id, def){ const v = +document.getElementById(id).value; return isNaN(v)? def : v; }
 function effLabel(eff){
-  const L = [["atk","attaque"],["dmg","dégâts"],["ca","CA"],["save","sauvegardes"],["init","init"],["comp","compétences"]];
+  const L = [["atk","attaque"],["dmg","dégâts"],["ca","CA"],["save","sauvegardes"],["init","init"],["comp","compétences"]]
+    .concat(ABIL.map(k=>[k,k]));
   const parts = L.filter(([k])=>eff[k]).map(([k,lb])=>sign(+eff[k])+" "+lb);
   return parts.join(" · ") || "aucun effet chiffré";
 }
@@ -724,12 +755,39 @@ function renderChips(){
   });
 }
 
+/* répercute sur les PV max un gain ou une perte définitive de CON (score de base, objet).
+   hp.conp mémorise le modificateur déjà pris en compte dans hp.max ; au premier passage on
+   se cale simplement sur la valeur actuelle, sans rien changer aux PV saisis. */
+function syncPermHp(){
+  const m = conPermMod();
+  if(hp.conp===undefined){ hp.conp = m; return; }
+  if(m===hp.conp) return;
+  const d = ch.level * (m - hp.conp);
+  hp.conp = m;
+  hp.max = Math.max(1, hp.max + d);
+  hp.cur = clamp(hp.cur + d, -50, hpTotal());
+  hp.nl  = clamp(hp.nl, -50, hpTotal());
+}
+/* applique / retire les PV temporaires quand le modificateur de CON change */
+function syncTempHp(){
+  const t = hpTemp(), prev = hp.tb||0;
+  if(t===prev) return;
+  hp.cur = clamp(hp.cur + (t-prev), -50, hp.max + t);
+  hp.nl  = clamp(hp.nl, -50, hp.max + t);
+  hp.tb  = t;
+}
 function renderHP(){
+  syncPermHp();
+  syncTempHp();
+  const tb = hp.tb||0, max = hpTotal();
   $("#hpCur").textContent = hp.cur;
-  $("#hpMax").textContent = hp.max;
-  $("#hpMaxLbl").textContent = hp.max;
+  $("#hpMax").textContent = max;
+  $("#hpMaxLbl").innerHTML = hp.max + (tb? ` <span class="delta">${sign(tb)}</span>` : "");
+  $("#hpMaxEdit").title = tb
+    ? `PV max ${hp.max} ${sign(tb)} de CON temporaire (${sign(conTempMod())} de mod × ${ch.level} niveaux) = ${max}`
+    : `Modifier les PV max (modificateur de CON permanent pris en compte : ${sign(hp.conp||0)} par niveau)`;
   $("#hpNl").textContent = hp.nl;
-  const pct = clamp(hp.cur/hp.max*100, 0, 100);
+  const pct = clamp(hp.cur/max*100, 0, 100);
   const f = $("#hpFill");
   f.style.width = pct+"%";
   f.className = pct<=35? "low" : "";
@@ -738,7 +796,7 @@ function renderHP(){
 }
 
 function caExtraTotal(){ return (ch.ca.extra||[]).reduce((s,x)=>s+(+x.v||0), 0); }
-function caBase(){ return 10 + ch.ca.armor + mod("SAG") + mod("DEX") + ch.ca.ring + ch.ca.barde + ch.ca.misc + caExtraTotal(); }
+function caBase(){ return 10 + ch.ca.armor + mod("SAG") + mod("DEX") + ch.ca.ring + ch.ca.moine + ch.ca.misc + caExtraTotal(); }
 
 function renderCA(){
   const d = derived();
@@ -750,7 +808,7 @@ function renderCA(){
     <div><span>Armure (nat)</span>${inp("caArmor",ch.ca.armor)}</div>
     <div><span>SAG &amp; DEX</span><span>+${mod("SAG")+mod("DEX")}</span></div>
     <div><span>Anneau d'armure du Héron</span>${inp("caRing",ch.ca.ring)}</div>
-    <div><span>Niveau 5 de barde</span>${inp("caBarde",ch.ca.barde)}</div>`;
+    <div><span>Bonus de moine (niveau ${ch.level})</span>${inp("caMoine",ch.ca.moine)}</div>`;
   if(E || ch.ca.misc) brk += `<div><span>Divers</span>${inp("caMisc",ch.ca.misc)}</div>`;
   (ch.ca.extra||[]).forEach((x,i)=>{
     brk += E
@@ -761,12 +819,12 @@ function renderCA(){
   $("#caBrk").innerHTML = brk;
   $("#caAdd").hidden = !E;
   if(E){
-    ["caArmor","caRing","caBarde","caMisc"].forEach(id=>{
+    ["caArmor","caRing","caMoine","caMisc"].forEach(id=>{
       const el = document.getElementById(id);
       if(el) el.addEventListener("change", ()=>{
         ch.ca.armor = num("caArmor",ch.ca.armor);
         ch.ca.ring  = num("caRing",ch.ca.ring);
-        ch.ca.barde = num("caBarde",ch.ca.barde);
+        ch.ca.moine = num("caMoine",ch.ca.moine);
         ch.ca.misc  = num("caMisc",ch.ca.misc);
         saveChar();
       });
@@ -852,14 +910,15 @@ function renderStats(){
   store.set("itemadj", itemAdj);
   const E = editing.stats;
   $("#stats").innerHTML = Object.keys(ch.scores).map(k=>{
-    const a = statAdj[k]||0, it = itemAdj[k]||0;
+    const a = statAdj[k]||0, it = itemAdj[k]||0, bf = buffAbil(k);
     const bits = [];
     if(it) bits.push(`objet ${sign(it)}`);
+    if(bf) bits.push(`buff ${sign(bf)}`);
     if(a) bits.push(`temp ${sign(a)}`);
     const sc = E
       ? `<input type="number" data-sc="${k}" value="${ch.scores[k]}"> <input class="itadj" type="number" data-it="${k}" value="${it}" title="Bonus d'objet (persiste au reset)">`
       : (bits.length? `${eff(k)} <span class="base">(base ${ch.scores[k]}, ${bits.join(", ")})</span>` : ch.scores[k]);
-    return `<div class="stat ${a||it? 'adj':''}"><div class="lb">${k}</div><div class="md">${sign(mod(k))}</div>
+    return `<div class="stat ${a||it||bf? 'adj':''}"><div class="lb">${k}</div><div class="md">${sign(mod(k))}</div>
      <div class="sc">${sc}</div>
      <div class="adjrow"><button data-adj="${k}" data-d="-1" title="Débuff temporaire −1 ${k}">−</button><button data-adj="${k}" data-d="1" title="Buff temporaire +1 ${k}">+</button></div></div>`;
   }).join("");
@@ -871,19 +930,19 @@ function renderStats(){
     document.querySelectorAll("[data-it]").forEach(inp=>inp.addEventListener("change", ()=>{
       const k = inp.dataset.it, v = +inp.value||0;
       if(v) itemAdj[k] = v; else delete itemAdj[k];
-      renderStats(); renderCombat();
+      renderStats(); renderCombat(); renderHP();
     }));
   }
   document.querySelectorAll("[data-adj]").forEach(b=>b.addEventListener("click", ()=>{
     const k = b.dataset.adj;
     statAdj[k] = (statAdj[k]||0) + (+b.dataset.d);
     if(!statAdj[k]) delete statAdj[k];
-    renderStats(); renderCombat();
+    renderStats(); renderCombat(); renderHP();
   }));
 }
 $("#statReset").addEventListener("click", ()=>{
   statAdj = {};
-  renderStats(); renderCombat();
+  renderStats(); renderCombat(); renderHP();
 });
 
 /* ---------- buffs (répertoire éditable) ---------- */
@@ -905,7 +964,7 @@ function renderBuffs(){
     document.querySelectorAll("[data-pa]").forEach(x=>x.addEventListener("click", ()=>{ pa = +x.dataset.pa; renderBuffs(); }));
     $("#clearBuffs").addEventListener("click", ()=>{ buffAct = []; pa = 0; renderBuffs(); });
   } else {
-    const EF = [["atk","ATK"],["dmg","DMG"],["ca","CA"],["save","SAVE"],["init","INIT"],["comp","COMP"]];
+    const EF = [["atk","ATK"],["dmg","DMG"],["ca","CA"],["save","SAVE"],["init","INIT"],["comp","COMP"]].concat(ABIL.map(k=>[k,k]));
     $("#buffBar").innerHTML = buffDefs.map((b,i)=>
       `<span class="buffedit"><input class="bn" value="${esc(b.n)}" data-bfn="${i}" placeholder="Nom du buff">`
       + EF.map(([k,lb])=>`<label>${lb}<input class="be" type="number" value="${+b.eff[k]||0}" data-bfe="${i}" data-k="${k}"></label>`).join("")
@@ -919,7 +978,7 @@ function renderBuffs(){
       const v = +inp.value||0;
       if(v) b.eff[inp.dataset.k] = v; else delete b.eff[inp.dataset.k];
       store.set("buffdefs", buffDefs);
-      renderCombat();
+      renderStats(); renderCombat(); renderHP();
     }));
     document.querySelectorAll("[data-bfdel]").forEach(x=>x.addEventListener("click", ()=>{
       const i = +x.dataset.bfdel;
@@ -929,7 +988,7 @@ function renderBuffs(){
       renderBuffs();
     }));
   }
-  renderCombat();
+  renderStats(); renderCombat(); renderHP();
 }
 $("#buffAddBtn").addEventListener("click", ()=>{
   buffDefs.push({id:"b"+Date.now(), n:"", eff:{}});
@@ -946,7 +1005,7 @@ $("#caAddBtn").addEventListener("click", ()=>{
 });
 
 function renderCombat(){ renderCA(); renderSaves(); renderAtk(); renderSkills(); }
-function saveChar(){ store.set("char", ch); renderChips(); renderStats(); renderCombat(); }
+function saveChar(){ store.set("char", ch); renderChips(); renderStats(); renderCombat(); renderHP(); }
 
 /* ---------- compétences ---------- */
 function skillVals(name, defP, defB){ return (name in skillOv)? skillOv[name] : [defP, defB]; }
@@ -1230,7 +1289,7 @@ $("#mapFile").addEventListener("change", ()=>{
 });
 
 /* ---------- sauvegarde export/import ---------- */
-const SAVE_KEYS = ["hp","money","skillov","notes2","inv2","char","feats2","future2","langs2","todo2","maps2","mapshidden","mapnames","buffdefs","buffact","pa","statadj","itemadj"];
+const SAVE_KEYS = ["hp","money","skillov","notes2","inv2","char","feats2","future2","langs2","todo2","maps2","mapshidden","mapnames","buffdefs","buffact","pa","statadj","itemadj","buffseed_abil"];
 function dumpState(){
   const o = {_fiche:"aldar", _date:store.lastChangeDate()};
   SAVE_KEYS.forEach(k=>o[k]=store.get(k,null));
@@ -1244,7 +1303,7 @@ function reloadAll(){
   mapsUser = store.get("maps2",[]); mapsHidden = store.get("mapshidden",[]); mapNames = store.get("mapnames",{});
   buffDefs = store.get("buffdefs",buffDefs); buffAct = store.get("buffact",buffAct); pa = store.get("pa",pa);
   statAdj = store.get("statadj",{}); itemAdj = store.get("itemadj",{});
-  if(!ch.ca.extra) ch.ca.extra = [];
+  fixChar(); seedAbilBuffs();
   noteEditIdx = -1; invEditIdx = -1;
   renderAll();
 }
@@ -1265,6 +1324,7 @@ $("#saveImport").addEventListener("click", ()=>{
     const o = JSON.parse($("#saveData").value);
     if(o._fiche!=="aldar") throw new Error("pas une sauvegarde de cette fiche");
     SAVE_KEYS.forEach(k=>{ if(o[k]!==null && o[k]!==undefined) store.set(k,o[k]); });
+    if(o.buffseed_abil===undefined) store.set("buffseed_abil", false);
     reloadAll();
     $("#saveMsg").textContent = "Importé ✔";
   }catch(e){ $("#saveMsg").textContent = "Échec : "+e.message; }
@@ -1285,14 +1345,14 @@ document.querySelectorAll(".editbtn[data-edit]").forEach(b=>b.addEventListener("
 
 const amt = ()=> Math.max(1, +$("#amt").value||1);
 $("#btnDmg").addEventListener("click", ()=>{ hp.cur -= amt(); renderHP(); });
-$("#btnHeal").addEventListener("click", ()=>{ hp.cur = clamp(hp.cur+amt(), -50, hp.max); renderHP(); });
-$("#btnRing").addEventListener("click", ()=>{ hp.cur = clamp(hp.cur+1, -50, hp.max); renderHP(); });
-$("#btnRest").addEventListener("click", ()=>{ hp.cur = hp.max; hp.nl = hp.max; renderHP(); });
+$("#btnHeal").addEventListener("click", ()=>{ hp.cur = clamp(hp.cur+amt(), -50, hpTotal()); renderHP(); });
+$("#btnRing").addEventListener("click", ()=>{ hp.cur = clamp(hp.cur+1, -50, hpTotal()); renderHP(); });
+$("#btnRest").addEventListener("click", ()=>{ hp.cur = hpTotal(); hp.nl = hpTotal(); renderHP(); });
 $("#nlMinus").addEventListener("click", ()=>{ hp.nl -= 1; renderHP(); });
-$("#nlPlus").addEventListener("click", ()=>{ hp.nl = clamp(hp.nl+1, -50, hp.max); renderHP(); });
+$("#nlPlus").addEventListener("click", ()=>{ hp.nl = clamp(hp.nl+1, -50, hpTotal()); renderHP(); });
 $("#hpMaxEdit").addEventListener("click", ()=>{
-  const v = prompt("HP max ?", hp.max);
-  if(v!==null && +v>0){ hp.max = +v; hp.cur = clamp(hp.cur, -50, hp.max); hp.nl = clamp(hp.nl, -50, hp.max); renderHP(); }
+  const v = prompt("PV max (hors CON temporaire) ?", hp.max);
+  if(v!==null && +v>0){ hp.max = +v; hp.cur = clamp(hp.cur, -50, hpTotal()); hp.nl = clamp(hp.nl, -50, hpTotal()); renderHP(); }
 });
 
 $("#skSearch").addEventListener("input", renderSkills);
