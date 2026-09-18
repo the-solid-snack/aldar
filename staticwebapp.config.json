@@ -1,7 +1,6 @@
 {
   "routes": [
-    { "route": "/share", "rewrite": "/share/index.html" },
-    { "route": "/share/", "rewrite": "/share/index.html" }
+    { "route": "/share", "rewrite": "/share/index.html" }
   ],
   "navigationFallback": {
     "rewrite": "/index.html",
