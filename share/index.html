@@ -535,11 +535,41 @@ const FEATS_SEED = [
  ["Pureté physique","Insensible aux maladies non magiques"],
  ["Chute ralentie","2D6"]
 ];
-/* lien de chaque don vers sa règle : ajouté aux dons qui n'en ont encore jamais eu (f[2] absent) */
-const FEAT_LINKS = {
- "Chute ralentie":"https://regles-donjons-dragons.com/page70.html",
- "Succession d'enchaînements":"https://regles-donjons-dragons.com/page350.html",
- "Science de l'initiative":"https://regles-donjons-dragons.com/page333.html"
+/* page de règles (regles-donjons-dragons.com/pageN.html) des dons généraux et des aptitudes de moine :
+   le lien est ajouté, d'après le nom, aux dons qui n'en ont encore jamais eu (f[2] absent).
+   « Coup assommant » est le Coup étourdissant ; le déplacement accéléré est décrit page des moines. */
+const FEAT_PAGES = {
+ "Déluge de coups":66,"Esquive totale":67,"Sérénité":68,"Frappe Ki":69,"Chute ralentie":70,"Pureté physique":71,
+ "Plénitude physique":72,"Esquive extraordinaire":73,"Corps de diamant":74,"Déluge supérieur":75,
+ "Pas chassé":76,"Âme de diamant":77,"Paume vibratoire":78,"Éternelle jeunesse":79,
+ "Langues du soleil et de la lune":80,"Désertion de l'âme":81,"Perfection de l'être":82,
+ "Déplacement accéléré":65,
+ "Affinité magique":270,"Amélioration des créatures convoquées":271,"Arme de prédilection":272,
+ "Arme de prédilection supérieure":273,"Arme en main":274,"Athlétisme":275,"Attaque au galop":276,
+ "Attaque éclair":277,"Attaque en finesse":278,"Attaque en puissance":279,"Attaque en rotation":280,
+ "Attaques réflexes":281,"Autonome":282,"Charge dévastatrice":283,"Combat à deux armes":284,
+ "Combat en aveugle":285,"Combat monté":286,"Coup étourdissant":287,"Course":288,"Défense à deux armes":289,
+ "Discret":290,"Dispense de composants matériels":291,"Doigts de fée":292,"Dur à cuire":293,
+ "Ecole renforcée":294,"Ecole supérieure":295,"Efficacité des sorts accrue":296,
+ "Efficacité des sorts supérieure":297,"Emprise sur les morts vivants":298,"Enchaînement":299,"Endurance":300,
+ "Esquive":301,"Expertise du combat":302,"Feu nourri":303,"Fin limier":304,"Fourberie":305,
+ "Fraternité animale":306,"Funambule":307,"Incantation animale":308,"Interception de projectile":309,
+ "Magie de guerre":310,"Maîtrise des sorts":311,"Maîtrise du combat à deux armes":312,
+ "Maniement d'une arme de guerre":313,"Maniement d'une arme exotique":314,"Maniement des armes courantes":315,
+ "Maniement des boucliers":316,"Maniement du pavois":317,"Méticuleux":318,"Négociation":319,
+ "Parade de projectiles":320,"Persuasion":321,"Piétinement":322,"Pistage":323,
+ "Port des armures intermédiaires":324,"Port des armures légères":325,"Port des armures lourdes":326,
+ "Prestige":327,"Rechargement rapide":328,"Réflexes surhumains":329,"Robustesse":330,
+ "Savoir faire mécanique":331,"Science de la destruction":332,"Science de l'initiative":333,
+ "Science de la bousculade":334,"Science de la feinte":335,"Science de la lutte":336,
+ "Science du combat à deux armes":337,"Science du combat à mains nues":338,"Science du contresort":339,
+ "Science du coup de bouclier":340,"Science du critique":341,"Science du croc en jambe":342,
+ "Science du désarmement":343,"Science du renversement":344,"Science du renvoi":345,
+ "Science du tir de précision":346,"Souplesse du serpent":347,"Spécialisation martiale":348,
+ "Spécialisation martiale supérieure":349,"Succession d'enchaînements":350,"Talent":351,
+ "Tir à bout portant":352,"Tir de loin":353,"Tir de précision":354,"Tir en mouvement":355,"Tir monté":356,
+ "Tir rapide":357,"Vigilance":358,"Vigueur surhumaine":359,"Volonté de fer":360,"Voltigeur":361,
+ "Coup assommant":287
 };
 const FUTURE_SEED = [
  ["Succession d'enchaînements","https://regles-donjons-dragons.com/page350.html"],
@@ -710,10 +740,18 @@ function fixChar(){
 fixChar();
 if(!feats){ feats = JSON.parse(JSON.stringify(FEATS_SEED)); store.set("feats2", feats); }
 const featKey = n => (n||"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[’']/g,"'");
-const featLink = n => { const k = featKey(n); const hit = Object.keys(FEAT_LINKS).find(x=>featKey(x)===k); return hit? FEAT_LINKS[hit] : ""; };
-function linkFeats(){ feats.forEach(f=>{ if(f[2]===undefined && featLink(f[0])) f[2] = featLink(f[0]); }); }
-linkFeats();
+/* nom exact, sinon le nom sans sa précision : « Arme de prédilection : mains nues », « Talent (Détection) » */
+const featLink = n => {
+  const keys = [featKey(n), featKey((n||"").split(/[:(]/)[0])];
+  const hit = Object.keys(FEAT_PAGES).find(x=>keys.includes(featKey(x)));
+  return hit? `https://regles-donjons-dragons.com/page${FEAT_PAGES[hit]}.html` : "";
+};
+function linkFeats(){
+  feats.forEach(f=>{ if(f[2]===undefined && featLink(f[0])) f[2] = featLink(f[0]); });
+  future.forEach(f=>{ if(!f[1] && featLink(f[0])) f[1] = featLink(f[0]); });
+}
 if(!future){ future = JSON.parse(JSON.stringify(FUTURE_SEED)); store.set("future2", future); }
+linkFeats();
 if(!langs){ langs = LANGS_SEED.slice(); store.set("langs2", langs); }
 if(todo===null){ todo = TODO_SEED; store.set("todo2", todo); }
 if(!buffDefs){ buffDefs = JSON.parse(JSON.stringify(BUFFS_SEED)); store.set("buffdefs", buffDefs); }
