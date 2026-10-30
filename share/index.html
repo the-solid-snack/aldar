@@ -690,6 +690,12 @@ if(!ch){ ch = JSON.parse(JSON.stringify(CHAR_SEED)); store.set("char", ch); }
 function fixChar(){
   if(!ch.ca.extra) ch.ca.extra = [];
   if(!ch.weapons) ch.weapons = [];
+  /* les armes créées avant l'arrivée du type : celles à distance se reconnaissent à leur nom */
+  ch.weapons.forEach(w=>{
+    if(w.ty) return;
+    w.ty = /arbal[eè]te|\barcs?\b|fronde|sarbacane|javeline|fl[eé]chette|shuriken|pistolet|mousquet/i.test(w.n||"")? "dist" : "cac";
+    if(w.ty==="dist"){ w.ab = "DEX"; w.dab = ""; }
+  });
   /* la fiche parlait d’un « niveau 5 de barde » : Aldar est moine, la clé est renommée. */
   if(ch.ca.moine===undefined){ ch.ca.moine = +ch.ca.barde||0; delete ch.ca.barde; store.set("char", ch); }
 }
@@ -735,7 +741,7 @@ const conTempMod = () => modOf(eff("CON")) - conPermMod();
 const hpTemp = () => ch.level * conTempMod();
 const hpTotal = () => hp.max + (hp.tb||0);
 const atkAbil = () => mod("FOR")>=mod("DEX")? "FOR" : "DEX"; // attaque en finesse : on garde le meilleur des deux
-/* armes : w.ab = carac d'attaque ("best" = meilleur de FOR/DEX), w.dab = carac de dégâts ("" = aucune) */
+/* armes : w.ty = "cac" ou "dist", w.ab = carac d'attaque ("best" = meilleur de FOR/DEX), w.dab = carac de dégâts ("" = aucune) */
 const wpAbil = w => (!w.ab || w.ab==="best")? atkAbil() : w.ab;
 const editing = {stats:false, ca:false, saves:false, atk:false, skills:false, feats:false, future:false, langs:false, todo:false, buffs:false};
 
@@ -900,12 +906,14 @@ function renderAtk(){
       <tr><td>Déluge de coups</td><td style="font-size:13px; font-weight:600">2 attaques</td></tr>
       <tr><td>Coup assommant</td><td style="font-size:13px; font-weight:600">Vig DD ${stunDD}</td></tr>`
       + (ch.weapons||[]).map(w=>{
-        const wab = wpAbil(w), wAtk = ch.bba + mod(wab) + (+w.atk||0) + d.atk;
-        const wDmg = (w.dab? mod(w.dab) : 0) + (+w.dmg||0) + d.dmg;
-        const tip = `Attaque = BBA ${ch.bba} + ${wab} ${mod(wab)} + ${+w.atk||0}${d.atk? ` + buffs ${d.atk}`:""}`
-          + ` · Dégâts = ${w.de||"—"} + ${w.dab? `${w.dab} ${mod(w.dab)} + `:""}${+w.dmg||0}${d.dmg? ` + buffs ${d.dmg}`:""}`;
+        const pw = w.ty==="dist"? 0 : pa; // attaque en puissance : corps à corps uniquement
+        const bAtk = d.atk + pa - pw, bDmg = d.dmg - pa + pw;
+        const wab = wpAbil(w), wAtk = ch.bba + mod(wab) + (+w.atk||0) + bAtk;
+        const wDmg = (w.dab? mod(w.dab) : 0) + (+w.dmg||0) + bDmg;
+        const tip = `Attaque = BBA ${ch.bba} + ${wab} ${mod(wab)} + ${+w.atk||0}${bAtk? ` + buffs ${bAtk}`:""}`
+          + ` · Dégâts = ${w.de||"—"} + ${w.dab? `${w.dab} ${mod(w.dab)} + `:""}${+w.dmg||0}${bDmg? ` + buffs ${bDmg}`:""}`;
         return `<tr><td title="${esc(tip)}">${esc(w.n)||"Arme"}${w.crit? ` <span style="color:var(--ink3); font-size:11px; white-space:nowrap">${esc(w.crit)}</span>`:""}</td>`
-          + `<td>${d.atk? `<span class="atkbuff">${sign(wAtk)}</span>`:sign(wAtk)} · ${esc(w.de||"—")}${sign(wDmg)}${d.dmg? ` <span class="atkbuff">▲</span>`:""}</td></tr>`;
+          + `<td>${bAtk? `<span class="atkbuff">${sign(wAtk)}</span>`:sign(wAtk)} · ${esc(w.de||"—")}${wDmg? sign(wDmg):""}${bDmg? ` <span class="atkbuff">▲</span>`:""}</td></tr>`;
       }).join("");
   } else {
     $("#atkTable").innerHTML = `
@@ -918,6 +926,7 @@ function renderAtk(){
         const sel = (k, opts) => `<select data-wp="${i}" data-k="${k}">` + opts.map(([v,lb])=>`<option value="${v}"${(w[k]||"")===v?" selected":""}>${lb}</option>`).join("") + `</select>`;
         return `<tr><td class="wpcell" colspan="2"><div class="wpedit">`
           + `<input class="wn" data-wp="${i}" data-k="n" value="${esc(w.n)}" placeholder="Nom de l'arme">`
+          + `<label>TYPE${sel("ty", [["cac","Corps à corps"],["dist","Distance"]])}</label>`
           + `<label>DÉ<input class="wide" data-wp="${i}" data-k="de" value="${esc(w.de)}" placeholder="1D8"></label>`
           + `<label>CARAC ATK${sel("ab", [["best","FOR/DEX"],["FOR","FOR"],["DEX","DEX"]])}</label>`
           + `<label>ATK<input type="number" data-wp="${i}" data-k="atk" value="${+w.atk||0}"></label>`
@@ -939,6 +948,8 @@ function renderAtk(){
     document.querySelectorAll("[data-wp]").forEach(inp=>inp.addEventListener("change", ()=>{
       const w = ch.weapons[+inp.dataset.wp], k = inp.dataset.k;
       w[k] = (k==="atk" || k==="dmg")? (+inp.value||0) : inp.value.trim();
+      /* à distance : DEX à l'attaque, rien aux dégâts (modifiable ensuite, ex. arc composite) */
+      if(k==="ty"){ w.ab = w.ty==="dist"? "DEX" : "best"; w.dab = w.ty==="dist"? "" : "FOR"; }
       saveChar();
     }));
     document.querySelectorAll("[data-wpdel]").forEach(b=>b.addEventListener("click", ()=>{
@@ -1052,7 +1063,7 @@ $("#caAddBtn").addEventListener("click", ()=>{
 
 $("#atkAddBtn").addEventListener("click", ()=>{
   if(!ch.weapons) ch.weapons = [];
-  ch.weapons.push({n:"", de:"1D8", ab:"best", atk:0, dab:"FOR", dmg:0, crit:""});
+  ch.weapons.push({n:"", ty:"cac", de:"1D8", ab:"best", atk:0, dab:"FOR", dmg:0, crit:""});
   saveChar();
   const last = document.querySelectorAll("#atkTable [data-k=n]");
   if(last.length) last[last.length-1].focus();
